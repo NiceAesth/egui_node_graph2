@@ -144,11 +144,14 @@ where
         if ui.rect_contains_pointer(clip_rect) {
             let (zoom_delta, scroll_delta, command) =
                 ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta, i.modifiers.command));
+            let zoom_focus = ui
+                .input(|i| i.pointer.hover_pos())
+                .map(|p| p - clip_rect.min);
             if zoom_delta != 1.0 {
-                self.zoom(ui, zoom_delta);
+                self.zoom_with_focus(ui, zoom_delta, zoom_focus);
             } else if command && scroll_delta.y != 0.0 {
                 let wheel_zoom_delta = (scroll_delta.y * 0.002).exp();
-                self.zoom(ui, wheel_zoom_delta);
+                self.zoom_with_focus(ui, wheel_zoom_delta, zoom_focus);
             } else if scroll_delta != Vec2::ZERO {
                 self.pan_zoom.pan += scroll_delta;
             }
@@ -172,26 +175,25 @@ where
     /// Zoom within the where you call `draw_graph_editor`. Use values like 1.01, or 0.99 to zoom.
     /// For example: `let zoom_delta = (scroll_delta * 0.002).exp();`
     pub fn zoom(&mut self, ui: &Ui, zoom_delta: f32) {
+        self.zoom_with_focus(ui, zoom_delta, None);
+    }
+
+    fn zoom_with_focus(&mut self, ui: &Ui, zoom_delta: f32, focus: Option<Vec2>) {
         // Update zoom, and styles
         let zoom_before = self.pan_zoom.zoom;
         self.pan_zoom.zoom(ui.clip_rect(), ui.style(), zoom_delta);
         if zoom_before != self.pan_zoom.zoom {
             let actual_delta = self.pan_zoom.zoom / zoom_before;
-            self.update_node_positions_after_zoom(actual_delta);
+            self.update_node_positions_after_zoom(actual_delta, focus);
         }
     }
 
-    fn update_node_positions_after_zoom(&mut self, zoom_delta: f32) {
-        // Update node positions, zoom towards center
-        let half_size = self.pan_zoom.clip_rect.size() / 2.0;
+    fn update_node_positions_after_zoom(&mut self, zoom_delta: f32, focus: Option<Vec2>) {
+        let anchor = focus.unwrap_or_else(|| self.pan_zoom.clip_rect.size() / 2.0);
         for (_id, node_pos) in self.node_positions.iter_mut() {
-            // 1. Get node local position (relative to origo)
-            let local_pos = node_pos.to_vec2() - half_size + self.pan_zoom.pan;
-            // 2. Scale local position by zoom delta
+            let local_pos = node_pos.to_vec2() - anchor + self.pan_zoom.pan;
             let scaled_local_pos = (local_pos * zoom_delta).to_pos2();
-            // 3. Transform back to global position
-            *node_pos = scaled_local_pos + half_size - self.pan_zoom.pan;
-            // This way we can retain pan untouched when zooming :)
+            *node_pos = scaled_local_pos + anchor - self.pan_zoom.pan;
         }
     }
 
@@ -623,12 +625,13 @@ where
         ui: &mut Ui,
         user_state: &mut UserState,
     ) -> Vec<NodeResponse<UserResponse, NodeData>> {
+        let node_size = vec2(Self::MAX_NODE_SIZE[0], Self::MAX_NODE_SIZE[1]) * pan_zoom.zoom;
         let mut child_ui = ui.new_child(
             UiBuilder::new()
                 .layout(Default::default())
                 .max_rect(Rect::from_min_size(
                     *self.position + self.pan,
-                    Self::MAX_NODE_SIZE.into(),
+                    node_size,
                 ))
                 .id_salt(self.node_id),
         );
@@ -664,10 +667,7 @@ where
         let outline_shape = ui.painter().add(Shape::Noop);
         let background_shape = ui.painter().add(Shape::Noop);
 
-        let mut outer_rect_bounds = ui.available_rect_before_wrap();
-        // Scale hack, otherwise some (larger) rects expand too much when zoomed out
-        outer_rect_bounds.max.x =
-            outer_rect_bounds.min.x + outer_rect_bounds.width() * pan_zoom.zoom;
+        let outer_rect_bounds = ui.available_rect_before_wrap();
 
         let mut inner_rect = outer_rect_bounds.shrink2(margin);
 
