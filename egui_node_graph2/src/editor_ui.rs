@@ -142,10 +142,15 @@ where
 
         // Zoom only within area where graph is shown
         if ui.rect_contains_pointer(clip_rect) {
-            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll_delta != 0.0 {
-                let zoom_delta = (scroll_delta * 0.002).exp();
+            let (zoom_delta, scroll_delta, command) =
+                ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta, i.modifiers.command));
+            if zoom_delta != 1.0 {
                 self.zoom(ui, zoom_delta);
+            } else if command && scroll_delta.y != 0.0 {
+                let wheel_zoom_delta = (scroll_delta.y * 0.002).exp();
+                self.zoom(ui, wheel_zoom_delta);
+            } else if scroll_delta != Vec2::ZERO {
+                self.pan_zoom.pan += scroll_delta;
             }
         }
 
